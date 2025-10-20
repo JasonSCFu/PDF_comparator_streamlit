@@ -237,7 +237,8 @@ with st.sidebar:
         st.session_state.pdf1_name = uploaded_file1.name
         
         if st.session_state.pdf1_total_pages == 0:
-            st.session_state.pdf1_total_pages = get_pdf_page_count(uploaded_file1)
+            with st.spinner("Reading PDF..."):
+                st.session_state.pdf1_total_pages = get_pdf_page_count(uploaded_file1)
         
         st.info(f"📄 {st.session_state.pdf1_total_pages} pages")
         
@@ -248,13 +249,14 @@ with st.sidebar:
         )
         
         if st.button("Load Page", key="load1", type="primary"):
-            img, w, h = pdf_to_image(uploaded_file1, page_num1 - 1)
-            if img:
-                st.session_state.pdf1_img = img
-                st.session_state.pdf1_width = w
-                st.session_state.pdf1_height = h
-                st.session_state.pdf1_page = page_num1 - 1
-                st.success("✓ Page loaded")
+            with st.spinner("Loading PDF page..."):
+                img, w, h = pdf_to_image(uploaded_file1, page_num1 - 1)
+                if img:
+                    st.session_state.pdf1_img = img
+                    st.session_state.pdf1_width = w
+                    st.session_state.pdf1_height = h
+                    st.session_state.pdf1_page = page_num1 - 1
+                    st.success("✓ Page loaded")
     
     st.markdown("---")
     
@@ -267,7 +269,8 @@ with st.sidebar:
         st.session_state.pdf2_name = uploaded_file2.name
         
         if st.session_state.pdf2_total_pages == 0:
-            st.session_state.pdf2_total_pages = get_pdf_page_count(uploaded_file2)
+            with st.spinner("Reading PDF..."):
+                st.session_state.pdf2_total_pages = get_pdf_page_count(uploaded_file2)
         
         st.info(f"📄 {st.session_state.pdf2_total_pages} pages")
         
@@ -278,13 +281,14 @@ with st.sidebar:
         )
         
         if st.button("Load Page", key="load2", type="primary"):
-            img, w, h = pdf_to_image(uploaded_file2, page_num2 - 1)
-            if img:
-                st.session_state.pdf2_img = img
-                st.session_state.pdf2_width = w
-                st.session_state.pdf2_height = h
-                st.session_state.pdf2_page = page_num2 - 1
-                st.success("✓ Page loaded")
+            with st.spinner("Loading PDF page..."):
+                img, w, h = pdf_to_image(uploaded_file2, page_num2 - 1)
+                if img:
+                    st.session_state.pdf2_img = img
+                    st.session_state.pdf2_width = w
+                    st.session_state.pdf2_height = h
+                    st.session_state.pdf2_page = page_num2 - 1
+                    st.success("✓ Page loaded")
     
     st.markdown("---")
     st.info("💡 Draw rectangles on the PDF to select text areas for comparison")
@@ -298,6 +302,8 @@ with col1:
     if st.session_state.pdf1_img:
         # Convert PIL Image to numpy array for better compatibility with Posit Connect
         img_array1 = np.array(st.session_state.pdf1_img)
+        
+        st.info("👆 Draw a rectangle on the PDF to select text")
         
         canvas_result1 = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
@@ -315,24 +321,25 @@ with col1:
             if canvas_result1.json_data is not None:
                 objects = canvas_result1.json_data.get("objects", [])
                 if objects:
-                    # Get the last drawn rectangle
-                    rect = objects[-1]
-                    x0 = rect['left']
-                    y0 = rect['top']
-                    x1 = x0 + rect['width']
-                    y1 = y0 + rect['height']
-                    
-                    text = extract_text_from_region(
-                        st.session_state.pdf1_file,
-                        st.session_state.pdf1_page,
-                        x0, y0, x1, y1
-                    )
-                    
-                    if text:
-                        st.session_state.selected_text1 = text
-                        st.success(f"✓ Extracted {len(text)} characters")
-                    else:
-                        st.warning("No text found in selection")
+                    with st.spinner("Extracting text from selected region..."):
+                        # Get the last drawn rectangle
+                        rect = objects[-1]
+                        x0 = rect['left']
+                        y0 = rect['top']
+                        x1 = x0 + rect['width']
+                        y1 = y0 + rect['height']
+                        
+                        text = extract_text_from_region(
+                            st.session_state.pdf1_file,
+                            st.session_state.pdf1_page,
+                            x0, y0, x1, y1
+                        )
+                        
+                        if text:
+                            st.session_state.selected_text1 = text
+                            st.success(f"✓ Extracted {len(text)} characters")
+                        else:
+                            st.warning("No text found in selection")
                 else:
                     st.warning("Please draw a rectangle first")
         
@@ -354,6 +361,8 @@ with col2:
         # Convert PIL Image to numpy array for better compatibility with Posit Connect
         img_array2 = np.array(st.session_state.pdf2_img)
         
+        st.info("👆 Draw a rectangle on the PDF to select text")
+        
         canvas_result2 = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=2,
@@ -370,23 +379,24 @@ with col2:
             if canvas_result2.json_data is not None:
                 objects = canvas_result2.json_data.get("objects", [])
                 if objects:
-                    rect = objects[-1]
-                    x0 = rect['left']
-                    y0 = rect['top']
-                    x1 = x0 + rect['width']
-                    y1 = y0 + rect['height']
-                    
-                    text = extract_text_from_region(
-                        st.session_state.pdf2_file,
-                        st.session_state.pdf2_page,
-                        x0, y0, x1, y1
-                    )
-                    
-                    if text:
-                        st.session_state.selected_text2 = text
-                        st.success(f"✓ Extracted {len(text)} characters")
-                    else:
-                        st.warning("No text found in selection")
+                    with st.spinner("Extracting text from selected region..."):
+                        rect = objects[-1]
+                        x0 = rect['left']
+                        y0 = rect['top']
+                        x1 = x0 + rect['width']
+                        y1 = y0 + rect['height']
+                        
+                        text = extract_text_from_region(
+                            st.session_state.pdf2_file,
+                            st.session_state.pdf2_page,
+                            x0, y0, x1, y1
+                        )
+                        
+                        if text:
+                            st.session_state.selected_text2 = text
+                            st.success(f"✓ Extracted {len(text)} characters")
+                        else:
+                            st.warning("No text found in selection")
                 else:
                     st.warning("Please draw a rectangle first")
         
@@ -432,7 +442,8 @@ if st.session_state.selected_text1 and st.session_state.selected_text2:
             st.markdown("---")
             st.subheader("⬇️ Download Report")
             
-            pdf_buffer = create_pdf_with_highlights(diff_data, st.session_state.pdf1_name, st.session_state.pdf2_name)
+            with st.spinner("Generating PDF report..."):
+                pdf_buffer = create_pdf_with_highlights(diff_data, st.session_state.pdf1_name, st.session_state.pdf2_name)
             
             st.download_button(
                 label="📥 Download as PDF",
