@@ -29,6 +29,10 @@ def pdf_to_image(pdf_file, page_num, zoom=2):
         pix = page.get_pixmap(matrix=mat)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         
+        # Ensure image is in RGB mode for compatibility
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
         pdf_document.close()
         return img, pix.width, pix.height
     except Exception as e:
@@ -292,14 +296,18 @@ with col1:
     st.subheader(f"📕 {st.session_state.pdf1_name}")
     
     if st.session_state.pdf1_img:
+        # Convert PIL Image to numpy array for better compatibility with Posit Connect
+        img_array1 = np.array(st.session_state.pdf1_img)
+        
         canvas_result1 = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=2,
             stroke_color="#FF0000",
-            background_image=st.session_state.pdf1_img,
+            background_image=Image.fromarray(img_array1),
             height=st.session_state.pdf1_height,
             width=st.session_state.pdf1_width,
             drawing_mode="rect",
+            update_streamlit=True,
             key="canvas1",
         )
         
@@ -343,14 +351,18 @@ with col2:
     st.subheader(f"📘 {st.session_state.pdf2_name}")
     
     if st.session_state.pdf2_img:
+        # Convert PIL Image to numpy array for better compatibility with Posit Connect
+        img_array2 = np.array(st.session_state.pdf2_img)
+        
         canvas_result2 = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=2,
             stroke_color="#0000FF",
-            background_image=st.session_state.pdf2_img,
+            background_image=Image.fromarray(img_array2),
             height=st.session_state.pdf2_height,
             width=st.session_state.pdf2_width,
             drawing_mode="rect",
+            update_streamlit=True,
             key="canvas2",
         )
         
