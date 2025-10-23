@@ -1,0 +1,8 @@
+I want to create a python application, maybe using streamlit or gradio.
+
+The app should be able to do the following:
+- allow user to input text in two text areas
+- compare the selected text and identify any differences in the words 
+- highlight the differences in the text
+- in the result, please maintain the orignal format of the text.
+- allow user to download the highlighted text as a words document
