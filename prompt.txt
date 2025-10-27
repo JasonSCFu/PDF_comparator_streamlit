@@ -6,3 +6,10 @@ The app should be able to do the following:
 - highlight the differences in the text
 - in the result, please maintain the orignal format of the text.
 - allow user to download the highlighted text as a words document
+
+Here is an additional feature that I want to add to the app:
+- create a SQLite database, 
+- user can input text, save, delete, update
+the records in the database.
+- User can name the records in the database, select from the name list, assign the column this record belongs to. 
+- Give a button to export the database as a csv file.

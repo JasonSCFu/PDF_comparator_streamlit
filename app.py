@@ -7,7 +7,11 @@ import tempfile
 import base64
 import os
 import re
-from typing import List, Tuple
+import sqlite3
+import csv
+import io
+from typing import List, Tuple, Dict, Optional
+from datetime import datetime
 
 # -------------- Utilities --------------
 
@@ -170,9 +174,167 @@ def make_download_button_docx(a: str, b: str, filename: str) -> None:
     except Exception as e:
         st.error(f"Error generating Word document: {str(e)}")
 
+# -------------- Database Functions --------------
+
+DB_NAME = "text_records.db"
+
+def init_db():
+    """Initialize the SQLite database and create tables if they don't exist."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS text_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            column_a TEXT,
+            column_b TEXT,
+            column_c TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_text_record(name: str, text_content: str, column: str = 'column_a') -> bool:
+    """Save a new text record or update if name already exists."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # Check if record exists
+        cursor.execute("SELECT id FROM text_records WHERE name = ?", (name,))
+        exists = cursor.fetchone()
+        
+        if exists:
+            # Update existing record
+            cursor.execute(f"""
+                UPDATE text_records 
+                SET {column} = ?, updated_at = ?
+                WHERE name = ?
+            """, (text_content, datetime.now(), name))
+        else:
+            # Insert new record
+            cursor.execute(f"""
+                INSERT INTO text_records (name, {column}, updated_at)
+                VALUES (?, ?, ?)
+            """, (name, text_content, datetime.now()))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error saving record: {str(e)}")
+        return False
+
+def get_all_record_names() -> List[str]:
+    """Get all record names from the database."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM text_records ORDER BY updated_at DESC")
+        names = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return names
+    except Exception as e:
+        st.error(f"Error fetching records: {str(e)}")
+        return []
+
+def get_text_record(name: str, column: str = 'column_a') -> Optional[str]:
+    """Get text content by record name and column."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT {column} FROM text_records WHERE name = ?", (name,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except Exception as e:
+        st.error(f"Error fetching record: {str(e)}")
+        return None
+
+def get_full_record(name: str) -> Optional[Dict]:
+    """Get full record with all columns by name."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, column_a, column_b, column_c FROM text_records WHERE name = ?", (name,))
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            return {
+                'name': result[0],
+                'column_a': result[1],
+                'column_b': result[2],
+                'column_c': result[3]
+            }
+        return None
+    except Exception as e:
+        st.error(f"Error fetching record: {str(e)}")
+        return None
+
+def delete_text_record(name: str) -> bool:
+    """Delete a text record by name."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM text_records WHERE name = ?", (name,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting record: {str(e)}")
+        return False
+
+def get_all_records() -> List[Dict]:
+    """Get all records with metadata."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, column_a, column_b, column_c, created_at, updated_at FROM text_records ORDER BY updated_at DESC")
+        records = []
+        for row in cursor.fetchall():
+            records.append({
+                'id': row[0],
+                'name': row[1],
+                'column_a': row[2],
+                'column_b': row[3],
+                'column_c': row[4],
+                'created_at': row[5],
+                'updated_at': row[6]
+            })
+        conn.close()
+        return records
+    except Exception as e:
+        st.error(f"Error fetching records: {str(e)}")
+        return []
+
+def export_to_csv() -> str:
+    """Export all records to CSV format."""
+    try:
+        records = get_all_records()
+        if not records:
+            return None
+        
+        output = io.StringIO()
+        fieldnames = ['id', 'name', 'column_a', 'column_b', 'column_c', 'created_at', 'updated_at']
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        
+        writer.writeheader()
+        for record in records:
+            writer.writerow(record)
+        
+        return output.getvalue()
+    except Exception as e:
+        st.error(f"Error exporting to CSV: {str(e)}")
+        return None
+
 # -------------- Streamlit App --------------
 
-st.set_page_config(page_title="Text Diff Highlighter", layout="centered")
+# Initialize database
+init_db()
+
+st.set_page_config(page_title="Text Diff Highlighter", layout="wide")
 
 st.markdown(
     """
@@ -191,20 +353,125 @@ st.markdown(
 
 st.title("Compare Text with Highlighted Differences")
 
+# Sidebar for database management
+with st.sidebar:
+    st.header("📚 Saved Text Records")
+    
+    # Get all saved records
+    saved_names = get_all_record_names()
+    
+    if saved_names:
+        st.markdown("**Load a saved record:**")
+        selected_record = st.selectbox("Select a record", [""] + saved_names, key="select_record")
+        
+        if selected_record:
+            # Show record details
+            record_data = get_full_record(selected_record)
+            if record_data:
+                st.markdown("**Record contents:**")
+                for col_name in ['column_a', 'column_b', 'column_c']:
+                    if record_data[col_name]:
+                        preview = record_data[col_name][:50] + "..." if len(record_data[col_name]) > 50 else record_data[col_name]
+                        st.caption(f"**{col_name.replace('_', ' ').title()}:** {preview}")
+                
+                st.markdown("**Select column to load:**")
+                load_column = st.radio("Column", ['column_a', 'column_b', 'column_c'], 
+                                      format_func=lambda x: x.replace('_', ' ').title(),
+                                      key="load_column",
+                                      horizontal=True)
+                
+                col_load1, col_load2 = st.columns(2)
+                with col_load1:
+                    if st.button("Load to Text A", key="load_a"):
+                        text_content = get_text_record(selected_record, load_column)
+                        if text_content is not None:
+                            st.session_state["ta"] = text_content
+                            st.success(f"Loaded to Text A")
+                            st.rerun()
+                        else:
+                            st.warning(f"{load_column} is empty")
+                
+                with col_load2:
+                    if st.button("Load to Text B", key="load_b"):
+                        text_content = get_text_record(selected_record, load_column)
+                        if text_content is not None:
+                            st.session_state["tb"] = text_content
+                            st.success(f"Loaded to Text B")
+                            st.rerun()
+                        else:
+                            st.warning(f"{load_column} is empty")
+                
+                st.divider()
+                if st.button("🗑️ Delete Record", key="delete_btn", type="secondary", use_container_width=True):
+                    if delete_text_record(selected_record):
+                        st.success(f"Deleted '{selected_record}'")
+                        st.rerun()
+        
+        st.divider()
+        st.markdown(f"**Total records:** {len(saved_names)}")
+        
+        # CSV Export
+        st.divider()
+        if st.button("📥 Export Database to CSV", key="export_csv", use_container_width=True):
+            csv_data = export_to_csv()
+            if csv_data:
+                st.download_button(
+                    label="Download CSV",
+                    data=csv_data,
+                    file_name="text_records_export.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+    else:
+        st.info("No saved records yet. Save your text below!")
+
 st.markdown("Enter text in the areas below to compare and highlight differences while preserving original formatting.")
 
 col1, col2 = st.columns(2)
+
 with col1:
     st.markdown("**Text A**")
     text_a = st.text_area("", height=200, key="ta", label_visibility="collapsed", placeholder="Enter first text here...")
+    
+    # Save Text A
+    with st.expander("💾 Save Text A"):
+        save_name_a = st.text_input("Enter a name for this text:", key="save_name_a")
+        save_column_a = st.selectbox("Select column:", ['column_a', 'column_b', 'column_c'],
+                                     format_func=lambda x: x.replace('_', ' ').title(),
+                                     key="save_column_a")
+        if st.button("Save Text A", key="save_btn_a"):
+            if save_name_a and text_a:
+                if save_text_record(save_name_a, text_a, save_column_a):
+                    st.success(f"Saved as '{save_name_a}' in {save_column_a.replace('_', ' ').title()}")
+                    st.rerun()
+            elif not save_name_a:
+                st.warning("Please enter a name")
+            else:
+                st.warning("Text A is empty")
 
 with col2:
     st.markdown("**Text B**")
     text_b = st.text_area("", height=200, key="tb", label_visibility="collapsed", placeholder="Enter second text here...")
+    
+    # Save Text B
+    with st.expander("💾 Save Text B"):
+        save_name_b = st.text_input("Enter a name for this text:", key="save_name_b")
+        save_column_b = st.selectbox("Select column:", ['column_a', 'column_b', 'column_c'],
+                                     format_func=lambda x: x.replace('_', ' ').title(),
+                                     key="save_column_b")
+        if st.button("Save Text B", key="save_btn_b"):
+            if save_name_b and text_b:
+                if save_text_record(save_name_b, text_b, save_column_b):
+                    st.success(f"Saved as '{save_name_b}' in {save_column_b.replace('_', ' ').title()}")
+                    st.rerun()
+            elif not save_name_b:
+                st.warning("Please enter a name")
+            else:
+                st.warning("Text B is empty")
 
 st.caption("Tip: The text areas will preserve line breaks and spacing in the comparison.")
 
-run = st.button("Compare Texts")
+run = st.button("Compare Texts", type="primary")
 
 if run:
     if not text_a and not text_b:
@@ -214,11 +481,16 @@ if run:
 
         st.subheader("Differences")
 
-        st.markdown("**Text A (with highlights)**")
-        st.markdown(f"<div class='panel'>{a_html}</div>", unsafe_allow_html=True)
-
-        st.markdown("**Text B (with highlights)**")
-        st.markdown(f"<div class='panel'>{b_html}</div>", unsafe_allow_html=True)
+        col_a, col_b = st.columns(2)
+        
+        with col_a:
+            st.markdown("**Text A (with highlights)**")
+            st.markdown(f"<div class='panel'>{a_html}</div>", unsafe_allow_html=True)
+        
+        with col_b:
+            st.markdown("**Text B (with highlights)**")
+            st.markdown(f"<div class='panel'>{b_html}</div>", unsafe_allow_html=True)
 
         # Generate and provide download
+        st.divider()
         make_download_button_docx(text_a, text_b, "highlighted_diff.docx")
