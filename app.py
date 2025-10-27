@@ -193,6 +193,22 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    
+    # Create settings table for column names
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    
+    # Initialize default column names if not exists
+    cursor.execute("SELECT COUNT(*) FROM settings WHERE key LIKE 'column_%_name'")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO settings (key, value) VALUES ('column_a_name', 'Column A')")
+        cursor.execute("INSERT INTO settings (key, value) VALUES ('column_b_name', 'Column B')")
+        cursor.execute("INSERT INTO settings (key, value) VALUES ('column_c_name', 'Column C')")
+    
     conn.commit()
     conn.close()
 
@@ -309,6 +325,43 @@ def get_all_records() -> List[Dict]:
         st.error(f"Error fetching records: {str(e)}")
         return []
 
+def get_column_name(column_key: str) -> str:
+    """Get custom column name from settings."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = ?", (f"{column_key}_name",))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else column_key.replace('_', ' ').title()
+    except Exception as e:
+        return column_key.replace('_', ' ').title()
+
+def get_all_column_names() -> Dict[str, str]:
+    """Get all custom column names."""
+    return {
+        'column_a': get_column_name('column_a'),
+        'column_b': get_column_name('column_b'),
+        'column_c': get_column_name('column_c')
+    }
+
+def set_column_name(column_key: str, name: str) -> bool:
+    """Set custom column name in settings."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, (f"{column_key}_name", name))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error setting column name: {str(e)}")
+        return False
+
 def export_to_csv() -> str:
     """Export all records to CSV format."""
     try:
@@ -355,10 +408,31 @@ st.title("Compare Text with Highlighted Differences")
 
 # Sidebar for database management
 with st.sidebar:
+    # Column Settings Section
+    with st.expander("⚙️ Column Settings"):
+        st.markdown("**Customize column names:**")
+        column_names = get_all_column_names()
+        
+        new_col_a = st.text_input("Column A Name:", value=column_names['column_a'], key="col_a_input")
+        new_col_b = st.text_input("Column B Name:", value=column_names['column_b'], key="col_b_input")
+        new_col_c = st.text_input("Column C Name:", value=column_names['column_c'], key="col_c_input")
+        
+        if st.button("Save Column Names", key="save_col_names"):
+            if new_col_a and new_col_b and new_col_c:
+                set_column_name('column_a', new_col_a)
+                set_column_name('column_b', new_col_b)
+                set_column_name('column_c', new_col_c)
+                st.success("Column names updated!")
+                st.rerun()
+            else:
+                st.warning("All column names must be filled")
+    
+    st.divider()
     st.header("📚 Saved Text Records")
     
-    # Get all saved records
+    # Get all saved records and current column names
     saved_names = get_all_record_names()
+    column_names = get_all_column_names()
     
     if saved_names:
         st.markdown("**Load a saved record:**")
@@ -372,11 +446,11 @@ with st.sidebar:
                 for col_name in ['column_a', 'column_b', 'column_c']:
                     if record_data[col_name]:
                         preview = record_data[col_name][:50] + "..." if len(record_data[col_name]) > 50 else record_data[col_name]
-                        st.caption(f"**{col_name.replace('_', ' ').title()}:** {preview}")
+                        st.caption(f"**{column_names[col_name]}:** {preview}")
                 
                 st.markdown("**Select column to load:**")
                 load_column = st.radio("Column", ['column_a', 'column_b', 'column_c'], 
-                                      format_func=lambda x: x.replace('_', ' ').title(),
+                                      format_func=lambda x: column_names[x],
                                       key="load_column",
                                       horizontal=True)
                 
@@ -389,7 +463,7 @@ with st.sidebar:
                             st.success(f"Loaded to Text A")
                             st.rerun()
                         else:
-                            st.warning(f"{load_column} is empty")
+                            st.warning(f"{column_names[load_column]} is empty")
                 
                 with col_load2:
                     if st.button("Load to Text B", key="load_b"):
@@ -399,7 +473,7 @@ with st.sidebar:
                             st.success(f"Loaded to Text B")
                             st.rerun()
                         else:
-                            st.warning(f"{load_column} is empty")
+                            st.warning(f"{column_names[load_column]} is empty")
                 
                 st.divider()
                 if st.button("🗑️ Delete Record", key="delete_btn", type="secondary", use_container_width=True):
@@ -427,6 +501,9 @@ with st.sidebar:
 
 st.markdown("Enter text in the areas below to compare and highlight differences while preserving original formatting.")
 
+# Get current column names
+column_names = get_all_column_names()
+
 col1, col2 = st.columns(2)
 
 with col1:
@@ -437,12 +514,12 @@ with col1:
     with st.expander("💾 Save Text A"):
         save_name_a = st.text_input("Enter a name for this text:", key="save_name_a")
         save_column_a = st.selectbox("Select column:", ['column_a', 'column_b', 'column_c'],
-                                     format_func=lambda x: x.replace('_', ' ').title(),
+                                     format_func=lambda x: column_names[x],
                                      key="save_column_a")
         if st.button("Save Text A", key="save_btn_a"):
             if save_name_a and text_a:
                 if save_text_record(save_name_a, text_a, save_column_a):
-                    st.success(f"Saved as '{save_name_a}' in {save_column_a.replace('_', ' ').title()}")
+                    st.success(f"Saved as '{save_name_a}' in {column_names[save_column_a]}")
                     st.rerun()
             elif not save_name_a:
                 st.warning("Please enter a name")
@@ -457,12 +534,12 @@ with col2:
     with st.expander("💾 Save Text B"):
         save_name_b = st.text_input("Enter a name for this text:", key="save_name_b")
         save_column_b = st.selectbox("Select column:", ['column_a', 'column_b', 'column_c'],
-                                     format_func=lambda x: x.replace('_', ' ').title(),
+                                     format_func=lambda x: column_names[x],
                                      key="save_column_b")
         if st.button("Save Text B", key="save_btn_b"):
             if save_name_b and text_b:
                 if save_text_record(save_name_b, text_b, save_column_b):
-                    st.success(f"Saved as '{save_name_b}' in {save_column_b.replace('_', ' ').title()}")
+                    st.success(f"Saved as '{save_name_b}' in {column_names[save_column_b]}")
                     st.rerun()
             elif not save_name_b:
                 st.warning("Please enter a name")

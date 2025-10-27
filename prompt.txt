@@ -12,4 +12,5 @@ Here is an additional feature that I want to add to the app:
 - user can input text, save, delete, update
 the records in the database.
 - User can name the records in the database, select from the name list, assign the column this record belongs to. 
+- User can define the column name.
 - Give a button to export the database as a csv file.
