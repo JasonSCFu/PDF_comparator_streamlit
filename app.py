@@ -10,6 +10,7 @@ import re
 import sqlite3
 import csv
 import io
+import json
 from typing import List, Tuple, Dict, Optional
 from datetime import datetime
 
@@ -182,19 +183,19 @@ def init_db():
     """Initialize the SQLite database and create tables if they don't exist."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    
+    # New flexible schema with JSON storage
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS text_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
-            column_a TEXT,
-            column_b TEXT,
-            column_c TEXT,
+            columns_data TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
-    # Create settings table for column names
+    # Create settings table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -202,39 +203,78 @@ def init_db():
         )
     """)
     
-    # Initialize default column names if not exists
-    cursor.execute("SELECT COUNT(*) FROM settings WHERE key LIKE 'column_%_name'")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO settings (key, value) VALUES ('column_a_name', 'Column A')")
-        cursor.execute("INSERT INTO settings (key, value) VALUES ('column_b_name', 'Column B')")
-        cursor.execute("INSERT INTO settings (key, value) VALUES ('column_c_name', 'Column C')")
+    # Initialize default column configuration if not exists
+    cursor.execute("SELECT value FROM settings WHERE key = 'columns_config'")
+    if not cursor.fetchone():
+        default_columns = [
+            {"id": "col_1", "name": "Column 1"},
+            {"id": "col_2", "name": "Column 2"},
+            {"id": "col_3", "name": "Column 3"}
+        ]
+        cursor.execute("INSERT INTO settings (key, value) VALUES ('columns_config', ?)", 
+                      (json.dumps(default_columns),))
     
     conn.commit()
     conn.close()
 
-def save_text_record(name: str, text_content: str, column: str = 'column_a') -> bool:
+def get_columns_config() -> List[Dict]:
+    """Get the current column configuration."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'columns_config'")
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            return json.loads(result[0])
+        return [{"id": "col_1", "name": "Column 1"}]
+    except Exception as e:
+        st.error(f"Error getting columns config: {str(e)}")
+        return [{"id": "col_1", "name": "Column 1"}]
+
+def set_columns_config(columns: List[Dict]) -> bool:
+    """Set the column configuration."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO settings (key, value)
+            VALUES ('columns_config', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, (json.dumps(columns),))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error setting columns config: {str(e)}")
+        return False
+
+def save_text_record(name: str, text_content: str, column_id: str) -> bool:
     """Save a new text record or update if name already exists."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         
         # Check if record exists
-        cursor.execute("SELECT id FROM text_records WHERE name = ?", (name,))
-        exists = cursor.fetchone()
+        cursor.execute("SELECT columns_data FROM text_records WHERE name = ?", (name,))
+        result = cursor.fetchone()
         
-        if exists:
+        if result:
             # Update existing record
-            cursor.execute(f"""
+            columns_data = json.loads(result[0]) if result[0] else {}
+            columns_data[column_id] = text_content
+            cursor.execute("""
                 UPDATE text_records 
-                SET {column} = ?, updated_at = ?
+                SET columns_data = ?, updated_at = ?
                 WHERE name = ?
-            """, (text_content, datetime.now(), name))
+            """, (json.dumps(columns_data), datetime.now(), name))
         else:
             # Insert new record
-            cursor.execute(f"""
-                INSERT INTO text_records (name, {column}, updated_at)
+            columns_data = {column_id: text_content}
+            cursor.execute("""
+                INSERT INTO text_records (name, columns_data, updated_at)
                 VALUES (?, ?, ?)
-            """, (name, text_content, datetime.now()))
+            """, (name, json.dumps(columns_data), datetime.now()))
         
         conn.commit()
         conn.close()
@@ -256,15 +296,18 @@ def get_all_record_names() -> List[str]:
         st.error(f"Error fetching records: {str(e)}")
         return []
 
-def get_text_record(name: str, column: str = 'column_a') -> Optional[str]:
-    """Get text content by record name and column."""
+def get_text_record(name: str, column_id: str) -> Optional[str]:
+    """Get text content by record name and column ID."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute(f"SELECT {column} FROM text_records WHERE name = ?", (name,))
+        cursor.execute("SELECT columns_data FROM text_records WHERE name = ?", (name,))
         result = cursor.fetchone()
         conn.close()
-        return result[0] if result else None
+        if result and result[0]:
+            columns_data = json.loads(result[0])
+            return columns_data.get(column_id)
+        return None
     except Exception as e:
         st.error(f"Error fetching record: {str(e)}")
         return None
@@ -274,15 +317,14 @@ def get_full_record(name: str) -> Optional[Dict]:
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute("SELECT name, column_a, column_b, column_c FROM text_records WHERE name = ?", (name,))
+        cursor.execute("SELECT name, columns_data FROM text_records WHERE name = ?", (name,))
         result = cursor.fetchone()
         conn.close()
         if result:
+            columns_data = json.loads(result[1]) if result[1] else {}
             return {
                 'name': result[0],
-                'column_a': result[1],
-                'column_b': result[2],
-                'column_c': result[3]
+                'columns': columns_data
             }
         return None
     except Exception as e:
@@ -307,60 +349,25 @@ def get_all_records() -> List[Dict]:
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, column_a, column_b, column_c, created_at, updated_at FROM text_records ORDER BY updated_at DESC")
+        cursor.execute("SELECT id, name, columns_data, created_at, updated_at FROM text_records ORDER BY updated_at DESC")
         records = []
         for row in cursor.fetchall():
-            records.append({
+            columns_data = json.loads(row[2]) if row[2] else {}
+            record = {
                 'id': row[0],
                 'name': row[1],
-                'column_a': row[2],
-                'column_b': row[3],
-                'column_c': row[4],
-                'created_at': row[5],
-                'updated_at': row[6]
-            })
+                'created_at': row[3],
+                'updated_at': row[4]
+            }
+            # Add each column as a separate field for CSV export
+            record.update(columns_data)
+            records.append(record)
         conn.close()
         return records
     except Exception as e:
         st.error(f"Error fetching records: {str(e)}")
         return []
 
-def get_column_name(column_key: str) -> str:
-    """Get custom column name from settings."""
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM settings WHERE key = ?", (f"{column_key}_name",))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else column_key.replace('_', ' ').title()
-    except Exception as e:
-        return column_key.replace('_', ' ').title()
-
-def get_all_column_names() -> Dict[str, str]:
-    """Get all custom column names."""
-    return {
-        'column_a': get_column_name('column_a'),
-        'column_b': get_column_name('column_b'),
-        'column_c': get_column_name('column_c')
-    }
-
-def set_column_name(column_key: str, name: str) -> bool:
-    """Set custom column name in settings."""
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO settings (key, value)
-            VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        """, (f"{column_key}_name", name))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        st.error(f"Error setting column name: {str(e)}")
-        return False
 
 def export_to_csv() -> str:
     """Export all records to CSV format."""
@@ -369,9 +376,15 @@ def export_to_csv() -> str:
         if not records:
             return None
         
+        # Get all unique fieldnames from all records
+        fieldnames = ['id', 'name']
+        columns_config = get_columns_config()
+        for col in columns_config:
+            fieldnames.append(col['id'])
+        fieldnames.extend(['created_at', 'updated_at'])
+        
         output = io.StringIO()
-        fieldnames = ['id', 'name', 'column_a', 'column_b', 'column_c', 'created_at', 'updated_at']
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
         
         writer.writeheader()
         for record in records:
@@ -409,30 +422,53 @@ st.title("Compare Text with Highlighted Differences")
 # Sidebar for database management
 with st.sidebar:
     # Column Settings Section
-    with st.expander("⚙️ Column Settings"):
-        st.markdown("**Customize column names:**")
-        column_names = get_all_column_names()
+    with st.expander("⚙️ Manage Columns", expanded=False):
+        st.markdown("**Configure your columns:**")
+        columns_config = get_columns_config()
         
-        new_col_a = st.text_input("Column A Name:", value=column_names['column_a'], key="col_a_input")
-        new_col_b = st.text_input("Column B Name:", value=column_names['column_b'], key="col_b_input")
-        new_col_c = st.text_input("Column C Name:", value=column_names['column_c'], key="col_c_input")
+        # Initialize session state for columns if not exists
+        if 'temp_columns' not in st.session_state:
+            st.session_state.temp_columns = columns_config.copy()
         
-        if st.button("Save Column Names", key="save_col_names"):
-            if new_col_a and new_col_b and new_col_c:
-                set_column_name('column_a', new_col_a)
-                set_column_name('column_b', new_col_b)
-                set_column_name('column_c', new_col_c)
-                st.success("Column names updated!")
+        # Display current columns with edit/delete options
+        for i, col in enumerate(st.session_state.temp_columns):
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                new_name = st.text_input(f"Column {i+1}", value=col['name'], key=f"col_name_{i}")
+                st.session_state.temp_columns[i]['name'] = new_name
+            with col2:
+                if len(st.session_state.temp_columns) > 1:
+                    if st.button("❌", key=f"del_col_{i}"):
+                        st.session_state.temp_columns.pop(i)
+                        st.rerun()
+        
+        # Add new column button
+        col_add, col_save = st.columns(2)
+        with col_add:
+            if st.button("➕ Add Column", key="add_col", use_container_width=True):
+                new_id = f"col_{len(st.session_state.temp_columns) + 1}"
+                st.session_state.temp_columns.append({"id": new_id, "name": f"Column {len(st.session_state.temp_columns) + 1}"})
                 st.rerun()
-            else:
-                st.warning("All column names must be filled")
+        
+        with col_save:
+            if st.button("💾 Save", key="save_cols", type="primary", use_container_width=True):
+                # Validate that all columns have names
+                if all(col['name'].strip() for col in st.session_state.temp_columns):
+                    # Update IDs for consistency
+                    for i, col in enumerate(st.session_state.temp_columns):
+                        col['id'] = f"col_{i+1}"
+                    if set_columns_config(st.session_state.temp_columns):
+                        st.success("Columns updated!")
+                        st.rerun()
+                else:
+                    st.warning("All columns must have names")
     
     st.divider()
     st.header("📚 Saved Text Records")
     
-    # Get all saved records and current column names
+    # Get all saved records and current column config
     saved_names = get_all_record_names()
-    column_names = get_all_column_names()
+    columns_config = get_columns_config()
     
     if saved_names:
         st.markdown("**Load a saved record:**")
@@ -443,14 +479,15 @@ with st.sidebar:
             record_data = get_full_record(selected_record)
             if record_data:
                 st.markdown("**Record contents:**")
-                for col_name in ['column_a', 'column_b', 'column_c']:
-                    if record_data[col_name]:
-                        preview = record_data[col_name][:50] + "..." if len(record_data[col_name]) > 50 else record_data[col_name]
-                        st.caption(f"**{column_names[col_name]}:** {preview}")
+                for col in columns_config:
+                    col_id = col['id']
+                    if col_id in record_data['columns'] and record_data['columns'][col_id]:
+                        preview = record_data['columns'][col_id][:50] + "..." if len(record_data['columns'][col_id]) > 50 else record_data['columns'][col_id]
+                        st.caption(f"**{col['name']}:** {preview}")
                 
                 st.markdown("**Select column to load:**")
-                load_column = st.radio("Column", ['column_a', 'column_b', 'column_c'], 
-                                      format_func=lambda x: column_names[x],
+                load_column = st.radio("Column", [col['id'] for col in columns_config], 
+                                      format_func=lambda x: next((col['name'] for col in columns_config if col['id'] == x), x),
                                       key="load_column",
                                       horizontal=True)
                 
@@ -463,7 +500,8 @@ with st.sidebar:
                             st.success(f"Loaded to Text A")
                             st.rerun()
                         else:
-                            st.warning(f"{column_names[load_column]} is empty")
+                            col_name = next((col['name'] for col in columns_config if col['id'] == load_column), load_column)
+                            st.warning(f"{col_name} is empty")
                 
                 with col_load2:
                     if st.button("Load to Text B", key="load_b"):
@@ -473,7 +511,8 @@ with st.sidebar:
                             st.success(f"Loaded to Text B")
                             st.rerun()
                         else:
-                            st.warning(f"{column_names[load_column]} is empty")
+                            col_name = next((col['name'] for col in columns_config if col['id'] == load_column), load_column)
+                            st.warning(f"{col_name} is empty")
                 
                 st.divider()
                 if st.button("🗑️ Delete Record", key="delete_btn", type="secondary", use_container_width=True):
@@ -501,8 +540,8 @@ with st.sidebar:
 
 st.markdown("Enter text in the areas below to compare and highlight differences while preserving original formatting.")
 
-# Get current column names
-column_names = get_all_column_names()
+# Get current column configuration
+columns_config = get_columns_config()
 
 col1, col2 = st.columns(2)
 
@@ -513,13 +552,14 @@ with col1:
     # Save Text A
     with st.expander("💾 Save Text A"):
         save_name_a = st.text_input("Enter a name for this text:", key="save_name_a")
-        save_column_a = st.selectbox("Select column:", ['column_a', 'column_b', 'column_c'],
-                                     format_func=lambda x: column_names[x],
+        save_column_a = st.selectbox("Select column:", [col['id'] for col in columns_config],
+                                     format_func=lambda x: next((col['name'] for col in columns_config if col['id'] == x), x),
                                      key="save_column_a")
         if st.button("Save Text A", key="save_btn_a"):
             if save_name_a and text_a:
                 if save_text_record(save_name_a, text_a, save_column_a):
-                    st.success(f"Saved as '{save_name_a}' in {column_names[save_column_a]}")
+                    col_name = next((col['name'] for col in columns_config if col['id'] == save_column_a), save_column_a)
+                    st.success(f"Saved as '{save_name_a}' in {col_name}")
                     st.rerun()
             elif not save_name_a:
                 st.warning("Please enter a name")
@@ -533,13 +573,14 @@ with col2:
     # Save Text B
     with st.expander("💾 Save Text B"):
         save_name_b = st.text_input("Enter a name for this text:", key="save_name_b")
-        save_column_b = st.selectbox("Select column:", ['column_a', 'column_b', 'column_c'],
-                                     format_func=lambda x: column_names[x],
+        save_column_b = st.selectbox("Select column:", [col['id'] for col in columns_config],
+                                     format_func=lambda x: next((col['name'] for col in columns_config if col['id'] == x), x),
                                      key="save_column_b")
         if st.button("Save Text B", key="save_btn_b"):
             if save_name_b and text_b:
                 if save_text_record(save_name_b, text_b, save_column_b):
-                    st.success(f"Saved as '{save_name_b}' in {column_names[save_column_b]}")
+                    col_name = next((col['name'] for col in columns_config if col['id'] == save_column_b), save_column_b)
+                    st.success(f"Saved as '{save_name_b}' in {col_name}")
                     st.rerun()
             elif not save_name_b:
                 st.warning("Please enter a name")
