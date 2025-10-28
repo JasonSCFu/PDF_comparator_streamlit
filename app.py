@@ -33,58 +33,142 @@ def to_preserved_html(text: str) -> str:
     escaped = escaped.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
     return f"<div class='preserve'>{escaped}</div>"
 
-def tokenize_words_keep_ws(text: str) -> List[str]:
-    """Tokenize into words but keep whitespace tokens to allow format-preserving diff highlighting."""
-    # Split on word boundaries, keep whitespace and punctuation
-    tokens = re.findall(r"\w+|\s+|[^\w\s]", text, flags=re.UNICODE)
-    return tokens
+def normalize_text_for_comparison(text: str) -> str:
+    """Normalize text for comparison by removing backspaces, slash content, and normalizing whitespace."""
+    # Remove backspace characters
+    text_no_backspace = text.replace('\b', '').replace('\x08', '')
+    # Remove text surrounded by slashes before normalization (global replacement)
+    text_no_slash = re.sub(r'/[^/]*/', '', text_no_backspace, flags=re.DOTALL)
+    # Replace all whitespace sequences (spaces, tabs, newlines, etc.) with a single space
+    # and strip leading/trailing whitespace
+    normalized = re.sub(r'\s+', ' ', text_no_slash).strip()
+    return normalized
+
+def highlight_text_diff(a: str, b: str, highlight_for: str) -> str:
+    """Highlight differences in text while preserving original formatting.
+    
+    Args:
+        a: First text
+        b: Second text
+        highlight_for: 'a' to highlight what's unique to a (deletions), 'b' for what's unique to b (insertions)
+    
+    Returns:
+        HTML string with highlighted differences
+    """
+    import difflib
+    
+    # Normalize text for comparison
+    a_normalized = normalize_text_for_comparison(a)
+    b_normalized = normalize_text_for_comparison(b)
+
+    # Split into words for comparison
+    a_words = a_normalized.split()
+    b_words = b_normalized.split()
+
+    # Create a matcher that ignores whitespace
+    matcher = difflib.SequenceMatcher(lambda x: x == ' ', a_words, b_words, autojunk=False)
+
+    # For display, preserve original formatting but remove slash content
+    text_to_display = a if highlight_for == 'a' else b
+    display_text = re.sub(r'/[^/]*/', '', text_to_display.replace('\b', '').replace('\x08', ''), flags=re.DOTALL)
+
+    # If texts are identical after normalization, return original formatting
+    if a_normalized == b_normalized:
+        # Convert to HTML-safe format
+        escaped = html_escape(display_text)
+        escaped = escaped.replace(" ", "&nbsp;").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace("\n", "<br>")
+        return escaped
+
+    # Split display text into words while preserving positions
+    display_words = []
+    word_positions = []
+
+    # Find word positions in the display text
+    for word in re.finditer(r'\S+', display_text):
+        display_words.append(word.group())
+        word_positions.append((word.start(), word.end()))
+
+    # Create result by reconstructing text with highlights
+    result = []
+    last_end = 0
+    word_index = 0
+
+    # Process each opcode from the matcher
+    for opcode, i1, i2, j1, j2 in matcher.get_opcodes():
+        if opcode == 'equal':
+            # Add words without highlighting, preserving original spacing
+            target_words = i2 - i1 if highlight_for == 'a' else j2 - j1
+            for _ in range(target_words):
+                if word_index < len(word_positions):
+                    start, end = word_positions[word_index]
+                    # Add any whitespace/formatting before this word (HTML-escaped)
+                    spacing = display_text[last_end:start]
+                    escaped_spacing = html_escape(spacing).replace(" ", "&nbsp;").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace("\n", "<br>")
+                    result.append(escaped_spacing)
+                    # Add the word itself (HTML-escaped)
+                    result.append(html_escape(display_words[word_index]))
+                    last_end = end
+                    word_index += 1
+
+        elif (opcode == 'delete' and highlight_for == 'a') or (opcode == 'insert' and highlight_for == 'b'):
+            # Highlight differences
+            target_words = i2 - i1 if highlight_for == 'a' else j2 - j1
+            css_class = 'del' if highlight_for == 'a' else 'ins'
+
+            for _ in range(target_words):
+                if word_index < len(word_positions):
+                    start, end = word_positions[word_index]
+                    # Add any whitespace/formatting before this word
+                    spacing = display_text[last_end:start]
+                    escaped_spacing = html_escape(spacing).replace(" ", "&nbsp;").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace("\n", "<br>")
+                    result.append(escaped_spacing)
+                    # Add the highlighted word
+                    result.append(f'<span class="{css_class}">{html_escape(display_words[word_index])}</span>')
+                    last_end = end
+                    word_index += 1
+
+        elif opcode == 'replace':
+            if highlight_for == 'a':
+                # Highlight deleted words in text A
+                for _ in range(i2 - i1):
+                    if word_index < len(word_positions):
+                        start, end = word_positions[word_index]
+                        spacing = display_text[last_end:start]
+                        escaped_spacing = html_escape(spacing).replace(" ", "&nbsp;").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace("\n", "<br>")
+                        result.append(escaped_spacing)
+                        result.append(f'<span class="replace-a">{html_escape(display_words[word_index])}</span>')
+                        last_end = end
+                        word_index += 1
+            elif highlight_for == 'b':
+                # Highlight inserted words in text B
+                for _ in range(j2 - j1):
+                    if word_index < len(word_positions):
+                        start, end = word_positions[word_index]
+                        spacing = display_text[last_end:start]
+                        escaped_spacing = html_escape(spacing).replace(" ", "&nbsp;").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace("\n", "<br>")
+                        result.append(escaped_spacing)
+                        result.append(f'<span class="replace-b">{html_escape(display_words[word_index])}</span>')
+                        last_end = end
+                        word_index += 1
+
+    # Add any remaining text after the last word
+    if last_end < len(display_text):
+        remaining = display_text[last_end:]
+        escaped_remaining = html_escape(remaining).replace(" ", "&nbsp;").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace("\n", "<br>")
+        result.append(escaped_remaining)
+
+    return ''.join(result)
 
 def diff_to_html(a: str, b: str) -> Tuple[str, str]:
     """Return (html_a, html_b) with span-based highlights for insert/delete/replace while preserving formatting."""
-    import difflib
-
-    a_tokens = tokenize_words_keep_ws(a)
-    b_tokens = tokenize_words_keep_ws(b)
-
-    sm = difflib.SequenceMatcher(a=a_tokens, b=b_tokens, autojunk=False)
-
-    a_out: List[str] = []
-    b_out: List[str] = []
-
-    def wrap(token: str, cls: str) -> str:
-        # Preserve whitespace faithfully
-        if token.isspace():
-            token_html = token.replace(" ", "&nbsp;").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace("\n", "<br>")
-        else:
-            token_html = html_escape(token)
-        return f"<span class='{cls}'>{token_html}</span>"
-
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == 'equal':
-            seg_a = ''.join(a_tokens[i1:i2])
-            seg_b = ''.join(b_tokens[j1:j2])
-            # Equal segments shown normally
-            a_out.append(html_escape(seg_a).replace(" ", "&nbsp;").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace("\n", "<br>"))
-            b_out.append(html_escape(seg_b).replace(" ", "&nbsp;").replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace("\n", "<br>"))
-        elif tag == 'replace':
-            for tok in a_tokens[i1:i2]:
-                a_out.append(wrap(tok, 'replace-a'))
-            for tok in b_tokens[j1:j2]:
-                b_out.append(wrap(tok, 'replace-b'))
-        elif tag == 'delete':
-            for tok in a_tokens[i1:i2]:
-                a_out.append(wrap(tok, 'del'))
-        elif tag == 'insert':
-            for tok in b_tokens[j1:j2]:
-                b_out.append(wrap(tok, 'ins'))
-
-    a_html = ''.join(a_out)
-    b_html = ''.join(b_out)
-
-    # Wrap in containers and ensure line breaks are preserved
+    # Use the complex comparison logic from compare_logic.py
+    a_html = highlight_text_diff(a, b, 'a')
+    b_html = highlight_text_diff(a, b, 'b')
+    
+    # Wrap in containers
     def wrap_container(content: str) -> str:
         return f"<div class='preserve'>{content}</div>"
-
+    
     return wrap_container(a_html), wrap_container(b_html)
 
 def add_highlight(run, highlight_type):
@@ -101,69 +185,137 @@ def add_highlight(run, highlight_type):
         run.font.highlight_color = 5  # Yellow highlight for replacement
 
 def make_download_button_docx(a: str, b: str, filename: str) -> None:
-    """Generate a Word document with highlighted differences."""
+    """Generate a Word document with highlighted differences using the complex comparison logic."""
     try:
+        import difflib
         doc = Document()
         doc.add_heading('Text Comparison with Highlights', 0)
 
-        # Add Text A
+        # Normalize text for comparison
+        a_normalized = normalize_text_for_comparison(a)
+        b_normalized = normalize_text_for_comparison(b)
+        
+        # Split into words for comparison
+        a_words = a_normalized.split()
+        b_words = b_normalized.split()
+        
+        # Create matcher
+        matcher = difflib.SequenceMatcher(lambda x: x == ' ', a_words, b_words, autojunk=False)
+
+        # Helper function to process text for document
+        def add_text_with_highlights(text: str, highlight_for: str):
+            """Add text to document with highlights based on comparison."""
+            # Prepare display text (remove backspaces and slash content)
+            display_text = re.sub(r'/[^/]*/', '', text.replace('\b', '').replace('\x08', ''), flags=re.DOTALL)
+            
+            # Split display text into words while preserving positions
+            display_words = []
+            word_positions = []
+            
+            for word in re.finditer(r'\S+', display_text):
+                display_words.append(word.group())
+                word_positions.append((word.start(), word.end()))
+            
+            current_paragraph = doc.add_paragraph()
+            last_end = 0
+            word_index = 0
+            
+            # Process each opcode from the matcher
+            for opcode, i1, i2, j1, j2 in matcher.get_opcodes():
+                if opcode == 'equal':
+                    target_words = i2 - i1 if highlight_for == 'a' else j2 - j1
+                    for _ in range(target_words):
+                        if word_index < len(word_positions):
+                            start, end = word_positions[word_index]
+                            # Add spacing before word
+                            spacing = display_text[last_end:start]
+                            if spacing:
+                                parts = spacing.split('\n')
+                                for i, part in enumerate(parts):
+                                    if i > 0:
+                                        current_paragraph = doc.add_paragraph()
+                                    if part:
+                                        current_paragraph.add_run(part)
+                            # Add the word
+                            current_paragraph.add_run(display_words[word_index])
+                            last_end = end
+                            word_index += 1
+                
+                elif (opcode == 'delete' and highlight_for == 'a') or (opcode == 'insert' and highlight_for == 'b'):
+                    target_words = i2 - i1 if highlight_for == 'a' else j2 - j1
+                    highlight_type = 'del' if highlight_for == 'a' else 'ins'
+                    
+                    for _ in range(target_words):
+                        if word_index < len(word_positions):
+                            start, end = word_positions[word_index]
+                            # Add spacing before word
+                            spacing = display_text[last_end:start]
+                            if spacing:
+                                parts = spacing.split('\n')
+                                for i, part in enumerate(parts):
+                                    if i > 0:
+                                        current_paragraph = doc.add_paragraph()
+                                    if part:
+                                        current_paragraph.add_run(part)
+                            # Add highlighted word
+                            run = current_paragraph.add_run(display_words[word_index])
+                            add_highlight(run, highlight_type)
+                            last_end = end
+                            word_index += 1
+                
+                elif opcode == 'replace':
+                    if highlight_for == 'a':
+                        # Highlight deleted words
+                        for _ in range(i2 - i1):
+                            if word_index < len(word_positions):
+                                start, end = word_positions[word_index]
+                                spacing = display_text[last_end:start]
+                                if spacing:
+                                    parts = spacing.split('\n')
+                                    for i, part in enumerate(parts):
+                                        if i > 0:
+                                            current_paragraph = doc.add_paragraph()
+                                        if part:
+                                            current_paragraph.add_run(part)
+                                run = current_paragraph.add_run(display_words[word_index])
+                                add_highlight(run, 'replace-a')
+                                last_end = end
+                                word_index += 1
+                    elif highlight_for == 'b':
+                        # Highlight inserted words
+                        for _ in range(j2 - j1):
+                            if word_index < len(word_positions):
+                                start, end = word_positions[word_index]
+                                spacing = display_text[last_end:start]
+                                if spacing:
+                                    parts = spacing.split('\n')
+                                    for i, part in enumerate(parts):
+                                        if i > 0:
+                                            current_paragraph = doc.add_paragraph()
+                                        if part:
+                                            current_paragraph.add_run(part)
+                                run = current_paragraph.add_run(display_words[word_index])
+                                add_highlight(run, 'replace-b')
+                                last_end = end
+                                word_index += 1
+            
+            # Add any remaining text
+            if last_end < len(display_text):
+                remaining = display_text[last_end:]
+                parts = remaining.split('\n')
+                for i, part in enumerate(parts):
+                    if i > 0:
+                        current_paragraph = doc.add_paragraph()
+                    if part:
+                        current_paragraph.add_run(part)
+
+        # Add Text A with highlights
         doc.add_heading('Text A', level=1)
-        a_tokens = tokenize_words_keep_ws(a)
-        b_tokens = tokenize_words_keep_ws(b)
-        import difflib
-        sm = difflib.SequenceMatcher(a=a_tokens, b=b_tokens, autojunk=False)
-
-        current_paragraph = doc.add_paragraph()
-        for tag, i1, i2, j1, j2 in sm.get_opcodes():
-            if tag == 'equal':
-                text = ''.join(a_tokens[i1:i2])
-                # Split by newlines and add to paragraphs
-                parts = text.split('\n')
-                for i, part in enumerate(parts):
-                    if i > 0:
-                        current_paragraph = doc.add_paragraph()
-                    run = current_paragraph.add_run(part)
-            elif tag == 'replace':
-                for tok in a_tokens[i1:i2]:
-                    if tok == '\n':
-                        current_paragraph = doc.add_paragraph()
-                    else:
-                        run = current_paragraph.add_run(tok)
-                        add_highlight(run, 'replace-a')
-            elif tag == 'delete':
-                for tok in a_tokens[i1:i2]:
-                    if tok == '\n':
-                        current_paragraph = doc.add_paragraph()
-                    else:
-                        run = current_paragraph.add_run(tok)
-                        add_highlight(run, 'del')
-
-        # Add Text B
+        add_text_with_highlights(a, 'a')
+        
+        # Add Text B with highlights
         doc.add_heading('Text B', level=1)
-        current_paragraph = doc.add_paragraph()
-        for tag, i1, i2, j1, j2 in sm.get_opcodes():
-            if tag == 'equal':
-                text = ''.join(b_tokens[j1:j2])
-                # Split by newlines and add to paragraphs
-                parts = text.split('\n')
-                for i, part in enumerate(parts):
-                    if i > 0:
-                        current_paragraph = doc.add_paragraph()
-                    run = current_paragraph.add_run(part)
-            elif tag == 'replace':
-                for tok in b_tokens[j1:j2]:
-                    if tok == '\n':
-                        current_paragraph = doc.add_paragraph()
-                    else:
-                        run = current_paragraph.add_run(tok)
-                        add_highlight(run, 'replace-b')
-            elif tag == 'insert':
-                for tok in b_tokens[j1:j2]:
-                    if tok == '\n':
-                        current_paragraph = doc.add_paragraph()
-                    else:
-                        run = current_paragraph.add_run(tok)
-                        add_highlight(run, 'ins')
+        add_text_with_highlights(b, 'b')
 
         # Save to a temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
