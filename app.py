@@ -184,8 +184,8 @@ def add_highlight(run, highlight_type):
     elif highlight_type == 'replace-b':
         run.font.highlight_color = 5  # Yellow highlight for replacement
 
-def make_download_button_docx(a: str, b: str, filename: str) -> None:
-    """Generate a Word document with highlighted differences using the complex comparison logic."""
+def make_download_button_docx(a: str, b: str, filename: str, label_a: str = "Text A", label_b: str = "Text B") -> None:
+    """Generate a Word document with highlighted differences in side-by-side format."""
     try:
         import difflib
         doc = Document()
@@ -202,9 +202,33 @@ def make_download_button_docx(a: str, b: str, filename: str) -> None:
         # Create matcher
         matcher = difflib.SequenceMatcher(lambda x: x == ' ', a_words, b_words, autojunk=False)
 
-        # Helper function to process text for document
-        def add_text_with_highlights(text: str, highlight_for: str):
-            """Add text to document with highlights based on comparison."""
+        # Create a table with 2 columns for side-by-side comparison
+        table = doc.add_table(rows=2, cols=2)
+        table.style = 'Light Grid Accent 1'
+        
+        # Add headers
+        header_cells = table.rows[0].cells
+        header_cells[0].text = f'{label_a} (with highlights)'
+        header_cells[1].text = f'{label_b} (with highlights)'
+        
+        # Make headers bold
+        for cell in header_cells:
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.bold = True
+
+        # Get the cells for content
+        content_cells = table.rows[1].cells
+        cell_a = content_cells[0]
+        cell_b = content_cells[1]
+        
+        # Clear default paragraphs
+        cell_a._element.clear_content()
+        cell_b._element.clear_content()
+
+        # Helper function to process text for a specific cell
+        def add_text_with_highlights_to_cell(cell, text: str, highlight_for: str):
+            """Add text to a table cell with highlights based on comparison."""
             # Prepare display text (remove backspaces and slash content)
             display_text = re.sub(r'/[^/]*/', '', text.replace('\b', '').replace('\x08', ''), flags=re.DOTALL)
             
@@ -216,7 +240,7 @@ def make_download_button_docx(a: str, b: str, filename: str) -> None:
                 display_words.append(word.group())
                 word_positions.append((word.start(), word.end()))
             
-            current_paragraph = doc.add_paragraph()
+            current_paragraph = cell.add_paragraph()
             last_end = 0
             word_index = 0
             
@@ -233,7 +257,7 @@ def make_download_button_docx(a: str, b: str, filename: str) -> None:
                                 parts = spacing.split('\n')
                                 for i, part in enumerate(parts):
                                     if i > 0:
-                                        current_paragraph = doc.add_paragraph()
+                                        current_paragraph = cell.add_paragraph()
                                     if part:
                                         current_paragraph.add_run(part)
                             # Add the word
@@ -254,7 +278,7 @@ def make_download_button_docx(a: str, b: str, filename: str) -> None:
                                 parts = spacing.split('\n')
                                 for i, part in enumerate(parts):
                                     if i > 0:
-                                        current_paragraph = doc.add_paragraph()
+                                        current_paragraph = cell.add_paragraph()
                                     if part:
                                         current_paragraph.add_run(part)
                             # Add highlighted word
@@ -274,7 +298,7 @@ def make_download_button_docx(a: str, b: str, filename: str) -> None:
                                     parts = spacing.split('\n')
                                     for i, part in enumerate(parts):
                                         if i > 0:
-                                            current_paragraph = doc.add_paragraph()
+                                            current_paragraph = cell.add_paragraph()
                                         if part:
                                             current_paragraph.add_run(part)
                                 run = current_paragraph.add_run(display_words[word_index])
@@ -291,7 +315,7 @@ def make_download_button_docx(a: str, b: str, filename: str) -> None:
                                     parts = spacing.split('\n')
                                     for i, part in enumerate(parts):
                                         if i > 0:
-                                            current_paragraph = doc.add_paragraph()
+                                            current_paragraph = cell.add_paragraph()
                                         if part:
                                             current_paragraph.add_run(part)
                                 run = current_paragraph.add_run(display_words[word_index])
@@ -305,17 +329,15 @@ def make_download_button_docx(a: str, b: str, filename: str) -> None:
                 parts = remaining.split('\n')
                 for i, part in enumerate(parts):
                     if i > 0:
-                        current_paragraph = doc.add_paragraph()
+                        current_paragraph = cell.add_paragraph()
                     if part:
                         current_paragraph.add_run(part)
 
-        # Add Text A with highlights
-        doc.add_heading('Text A', level=1)
-        add_text_with_highlights(a, 'a')
+        # Add Text A with highlights to left cell
+        add_text_with_highlights_to_cell(cell_a, a, 'a')
         
-        # Add Text B with highlights
-        doc.add_heading('Text B', level=1)
-        add_text_with_highlights(b, 'b')
+        # Add Text B with highlights to right cell
+        add_text_with_highlights_to_cell(cell_b, b, 'b')
 
         # Save to a temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
@@ -355,13 +377,13 @@ def init_db():
         )
     """)
     
-    # Initialize default column configuration if not exists
+    # Initialize default policy configuration if not exists
     cursor.execute("SELECT value FROM settings WHERE key = 'columns_config'")
     if not cursor.fetchone():
         default_columns = [
-            {"id": "col_1", "name": "Column 1"},
-            {"id": "col_2", "name": "Column 2"},
-            {"id": "col_3", "name": "Column 3"}
+            {"id": "col_1", "name": "Policy 1"},
+            {"id": "col_2", "name": "Policy 2"},
+            {"id": "col_3", "name": "Policy 3"}
         ]
         cursor.execute("INSERT INTO settings (key, value) VALUES ('columns_config', ?)", 
                       (json.dumps(default_columns),))
@@ -370,7 +392,7 @@ def init_db():
     conn.close()
 
 def get_columns_config() -> List[Dict]:
-    """Get the current column configuration."""
+    """Get the current policy configuration."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -379,13 +401,13 @@ def get_columns_config() -> List[Dict]:
         conn.close()
         if result:
             return json.loads(result[0])
-        return [{"id": "col_1", "name": "Column 1"}]
+        return [{"id": "col_1", "name": "Policy 1"}]
     except Exception as e:
-        st.error(f"Error getting columns config: {str(e)}")
-        return [{"id": "col_1", "name": "Column 1"}]
+        st.error(f"Error getting policies config: {str(e)}")
+        return [{"id": "col_1", "name": "Policy 1"}]
 
 def set_columns_config(columns: List[Dict]) -> bool:
-    """Set the column configuration."""
+    """Set the policy configuration."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -398,11 +420,11 @@ def set_columns_config(columns: List[Dict]) -> bool:
         conn.close()
         return True
     except Exception as e:
-        st.error(f"Error setting columns config: {str(e)}")
+        st.error(f"Error setting policies config: {str(e)}")
         return False
 
 def save_text_record(name: str, text_content: str, column_id: str) -> bool:
-    """Save a new text record or update if name already exists."""
+    """Save a new wording or update if name already exists."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -436,7 +458,7 @@ def save_text_record(name: str, text_content: str, column_id: str) -> bool:
         return False
 
 def get_all_record_names() -> List[str]:
-    """Get all record names from the database."""
+    """Get all wording names from the database."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -449,7 +471,7 @@ def get_all_record_names() -> List[str]:
         return []
 
 def get_text_record(name: str, column_id: str) -> Optional[str]:
-    """Get text content by record name and column ID."""
+    """Get text content by wording name and policy ID."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -465,7 +487,7 @@ def get_text_record(name: str, column_id: str) -> Optional[str]:
         return None
 
 def get_full_record(name: str) -> Optional[Dict]:
-    """Get full record with all columns by name."""
+    """Get full wording with all policies by name."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -484,7 +506,7 @@ def get_full_record(name: str) -> Optional[Dict]:
         return None
 
 def delete_text_record(name: str) -> bool:
-    """Delete a text record by name."""
+    """Delete a wording by name."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -497,7 +519,7 @@ def delete_text_record(name: str) -> bool:
         return False
 
 def get_all_records() -> List[Dict]:
-    """Get all records with metadata."""
+    """Get all wordings with metadata."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -521,28 +543,58 @@ def get_all_records() -> List[Dict]:
         return []
 
 
-def export_to_csv() -> str:
-    """Export all records to CSV format."""
+def export_to_csv() -> bytes:
+    """Export all wordings to CSV format with Policies as column names and Wordings as row names."""
     try:
         records = get_all_records()
         if not records:
             return None
         
-        # Get all unique fieldnames from all records
-        fieldnames = ['id', 'name']
         columns_config = get_columns_config()
-        for col in columns_config:
-            fieldnames.append(col['id'])
-        fieldnames.extend(['created_at', 'updated_at'])
         
+        # Create mapping from col_id to policy name
+        col_id_to_name = {col['id']: col['name'] for col in columns_config}
+        
+        # Transform records to use Policy names as keys
+        transformed_records = []
+        for record in records:
+            new_record = {
+                'Wording': record.get('name', '').strip() if record.get('name') else '',
+                'ID': record.get('id', ''),
+            }
+            # Add policy columns with their actual names, trim whitespace
+            for col in columns_config:
+                col_id = col['id']
+                policy_name = col['name']
+                text_value = record.get(col_id, '')
+                # Strip leading and trailing whitespace from text content
+                if isinstance(text_value, str):
+                    text_value = text_value.strip()
+                new_record[policy_name] = text_value
+            
+            # Add metadata
+            new_record['Created At'] = record.get('created_at', '')
+            new_record['Updated At'] = record.get('updated_at', '')
+            transformed_records.append(new_record)
+        
+        # Define fieldnames with Policy names as column headers
+        fieldnames = ['Wording', 'ID']
+        for col in columns_config:
+            fieldnames.append(col['name'])
+        fieldnames.extend(['Created At', 'Updated At'])
+        
+        # Use StringIO to build CSV
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
         
         writer.writeheader()
-        for record in records:
+        for record in transformed_records:
             writer.writerow(record)
         
-        return output.getvalue()
+        # Convert to bytes with UTF-8 BOM encoding for proper display in Excel
+        csv_string = output.getvalue()
+        # Add UTF-8 BOM to ensure proper encoding recognition
+        return '\ufeff'.encode('utf-8') + csv_string.encode('utf-8')
     except Exception as e:
         st.error(f"Error exporting to CSV: {str(e)}")
         return None
@@ -557,12 +609,30 @@ st.set_page_config(page_title="Text Diff Highlighter", layout="wide")
 st.markdown(
     """
     <style>
-    .preserve { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; line-height: 1.5; }
+    .preserve { 
+        white-space: pre-wrap; 
+        word-wrap: break-word; 
+        overflow-wrap: break-word; 
+        word-break: break-word;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; 
+        line-height: 1.5; 
+        max-width: 100%;
+        overflow-x: auto;
+    }
     .del { background: #ffe0e0; text-decoration: line-through; }
     .ins { background: #e0ffe0; }
     .replace-a { background: #fff0cc; text-decoration: line-through; }
     .replace-b { background: #e6f0ff; }
-    .panel { border: 1px solid #ddd; border-radius: 6px; padding: 12px; background: #fafafa; }
+    .panel { 
+        border: 1px solid #ddd; 
+        border-radius: 6px; 
+        padding: 12px; 
+        background: #fafafa; 
+        max-width: 100%;
+        overflow-x: auto;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
     .heading { font-weight: 600; margin-bottom: 8px; }
     </style>
     """,
@@ -573,20 +643,20 @@ st.title("Compare Text with Highlighted Differences")
 
 # Sidebar for database management
 with st.sidebar:
-    # Column Settings Section
-    with st.expander("⚙️ Manage Columns", expanded=False):
-        st.markdown("**Configure your columns:**")
+    # Policy Settings Section
+    with st.expander("⚙️ Manage Policies", expanded=False):
+        st.markdown("**Configure your policies:**")
         columns_config = get_columns_config()
         
         # Initialize session state for columns if not exists
         if 'temp_columns' not in st.session_state:
             st.session_state.temp_columns = columns_config.copy()
         
-        # Display current columns with edit/delete options
+        # Display current policies with edit/delete options
         for i, col in enumerate(st.session_state.temp_columns):
             col1, col2 = st.columns([4, 1])
             with col1:
-                new_name = st.text_input(f"Column {i+1}", value=col['name'], key=f"col_name_{i}")
+                new_name = st.text_input(f"Policy {i+1}", value=col['name'], key=f"col_name_{i}")
                 st.session_state.temp_columns[i]['name'] = new_name
             with col2:
                 if len(st.session_state.temp_columns) > 1:
@@ -594,51 +664,51 @@ with st.sidebar:
                         st.session_state.temp_columns.pop(i)
                         st.rerun()
         
-        # Add new column button
+        # Add new policy button
         col_add, col_save = st.columns(2)
         with col_add:
-            if st.button("➕ Add Column", key="add_col", use_container_width=True):
+            if st.button("➕ Add Policy", key="add_col", use_container_width=True):
                 new_id = f"col_{len(st.session_state.temp_columns) + 1}"
-                st.session_state.temp_columns.append({"id": new_id, "name": f"Column {len(st.session_state.temp_columns) + 1}"})
+                st.session_state.temp_columns.append({"id": new_id, "name": f"Policy {len(st.session_state.temp_columns) + 1}"})
                 st.rerun()
         
         with col_save:
             if st.button("💾 Save", key="save_cols", type="primary", use_container_width=True):
-                # Validate that all columns have names
+                # Validate that all policies have names
                 if all(col['name'].strip() for col in st.session_state.temp_columns):
                     # Update IDs for consistency
                     for i, col in enumerate(st.session_state.temp_columns):
                         col['id'] = f"col_{i+1}"
                     if set_columns_config(st.session_state.temp_columns):
-                        st.success("Columns updated!")
+                        st.success("Policies updated!")
                         st.rerun()
                 else:
-                    st.warning("All columns must have names")
+                    st.warning("All policies must have names")
     
     st.divider()
-    st.header("📚 Saved Text Records")
+    st.header("📚 Saved Wordings")
     
-    # Get all saved records and current column config
+    # Get all saved wordings and current policy config
     saved_names = get_all_record_names()
     columns_config = get_columns_config()
     
     if saved_names:
-        st.markdown("**Load a saved record:**")
-        selected_record = st.selectbox("Select a record", [""] + saved_names, key="select_record")
+        st.markdown("**Load a saved wording:**")
+        selected_record = st.selectbox("Select a wording", [""] + saved_names, key="select_record")
         
         if selected_record:
-            # Show record details
+            # Show wording details
             record_data = get_full_record(selected_record)
             if record_data:
-                st.markdown("**Record contents:**")
+                st.markdown("**Wording contents:**")
                 for col in columns_config:
                     col_id = col['id']
                     if col_id in record_data['columns'] and record_data['columns'][col_id]:
                         preview = record_data['columns'][col_id][:50] + "..." if len(record_data['columns'][col_id]) > 50 else record_data['columns'][col_id]
                         st.caption(f"**{col['name']}:** {preview}")
                 
-                st.markdown("**Select column to load:**")
-                load_column = st.radio("Column", [col['id'] for col in columns_config], 
+                st.markdown("**Select policy to load:**")
+                load_column = st.radio("Policy", [col['id'] for col in columns_config], 
                                       format_func=lambda x: next((col['name'] for col in columns_config if col['id'] == x), x),
                                       key="load_column",
                                       horizontal=True)
@@ -649,6 +719,8 @@ with st.sidebar:
                         text_content = get_text_record(selected_record, load_column)
                         if text_content is not None:
                             st.session_state["ta"] = text_content
+                            col_name = next((col['name'] for col in columns_config if col['id'] == load_column), load_column)
+                            st.session_state["ta_label"] = f"{selected_record} - {col_name}"
                             st.success(f"Loaded to Text A")
                             st.rerun()
                         else:
@@ -660,6 +732,8 @@ with st.sidebar:
                         text_content = get_text_record(selected_record, load_column)
                         if text_content is not None:
                             st.session_state["tb"] = text_content
+                            col_name = next((col['name'] for col in columns_config if col['id'] == load_column), load_column)
+                            st.session_state["tb_label"] = f"{selected_record} - {col_name}"
                             st.success(f"Loaded to Text B")
                             st.rerun()
                         else:
@@ -667,13 +741,13 @@ with st.sidebar:
                             st.warning(f"{col_name} is empty")
                 
                 st.divider()
-                if st.button("🗑️ Delete Record", key="delete_btn", type="secondary", use_container_width=True):
+                if st.button("🗑️ Delete Wording", key="delete_btn", type="secondary", use_container_width=True):
                     if delete_text_record(selected_record):
                         st.success(f"Deleted '{selected_record}'")
                         st.rerun()
         
         st.divider()
-        st.markdown(f"**Total records:** {len(saved_names)}")
+        st.markdown(f"**Total wordings:** {len(saved_names)}")
         
         # CSV Export
         st.divider()
@@ -684,11 +758,11 @@ with st.sidebar:
                     label="Download CSV",
                     data=csv_data,
                     file_name="text_records_export.csv",
-                    mime="text/csv",
+                    mime="text/csv; charset=utf-8",
                     use_container_width=True
                 )
     else:
-        st.info("No saved records yet. Save your text below!")
+        st.info("No saved wordings yet. Save your text below!")
 
 st.markdown("Enter text in the areas below to compare and highlight differences while preserving original formatting.")
 
@@ -697,20 +771,27 @@ columns_config = get_columns_config()
 
 col1, col2 = st.columns(2)
 
+# Initialize labels if not set
+if "ta_label" not in st.session_state:
+    st.session_state["ta_label"] = "Text A"
+if "tb_label" not in st.session_state:
+    st.session_state["tb_label"] = "Text B"
+
 with col1:
-    st.markdown("**Text A**")
+    st.markdown(f"**{st.session_state['ta_label']}**")
     text_a = st.text_area("", height=200, key="ta", label_visibility="collapsed", placeholder="Enter first text here...")
     
     # Save Text A
     with st.expander("💾 Save Text A"):
-        save_name_a = st.text_input("Enter a name for this text:", key="save_name_a")
-        save_column_a = st.selectbox("Select column:", [col['id'] for col in columns_config],
+        save_name_a = st.text_input("Enter a wording name:", key="save_name_a")
+        save_column_a = st.selectbox("Select policy:", [col['id'] for col in columns_config],
                                      format_func=lambda x: next((col['name'] for col in columns_config if col['id'] == x), x),
                                      key="save_column_a")
         if st.button("Save Text A", key="save_btn_a"):
             if save_name_a and text_a:
                 if save_text_record(save_name_a, text_a, save_column_a):
                     col_name = next((col['name'] for col in columns_config if col['id'] == save_column_a), save_column_a)
+                    st.session_state["ta_label"] = f"{save_name_a} - {col_name}"
                     st.success(f"Saved as '{save_name_a}' in {col_name}")
                     st.rerun()
             elif not save_name_a:
@@ -719,19 +800,20 @@ with col1:
                 st.warning("Text A is empty")
 
 with col2:
-    st.markdown("**Text B**")
+    st.markdown(f"**{st.session_state['tb_label']}**")
     text_b = st.text_area("", height=200, key="tb", label_visibility="collapsed", placeholder="Enter second text here...")
     
     # Save Text B
     with st.expander("💾 Save Text B"):
-        save_name_b = st.text_input("Enter a name for this text:", key="save_name_b")
-        save_column_b = st.selectbox("Select column:", [col['id'] for col in columns_config],
+        save_name_b = st.text_input("Enter a wording name:", key="save_name_b")
+        save_column_b = st.selectbox("Select policy:", [col['id'] for col in columns_config],
                                      format_func=lambda x: next((col['name'] for col in columns_config if col['id'] == x), x),
                                      key="save_column_b")
         if st.button("Save Text B", key="save_btn_b"):
             if save_name_b and text_b:
                 if save_text_record(save_name_b, text_b, save_column_b):
                     col_name = next((col['name'] for col in columns_config if col['id'] == save_column_b), save_column_b)
+                    st.session_state["tb_label"] = f"{save_name_b} - {col_name}"
                     st.success(f"Saved as '{save_name_b}' in {col_name}")
                     st.rerun()
             elif not save_name_b:
@@ -754,13 +836,15 @@ if run:
         col_a, col_b = st.columns(2)
         
         with col_a:
-            st.markdown("**Text A (with highlights)**")
+            st.markdown(f"**{st.session_state['ta_label']} (with highlights)**")
             st.markdown(f"<div class='panel'>{a_html}</div>", unsafe_allow_html=True)
         
         with col_b:
-            st.markdown("**Text B (with highlights)**")
+            st.markdown(f"**{st.session_state['tb_label']} (with highlights)**")
             st.markdown(f"<div class='panel'>{b_html}</div>", unsafe_allow_html=True)
 
         # Generate and provide download
         st.divider()
-        make_download_button_docx(text_a, text_b, "highlighted_diff.docx")
+        make_download_button_docx(text_a, text_b, "highlighted_diff.docx", 
+                                 st.session_state.get('ta_label', 'Text A'), 
+                                 st.session_state.get('tb_label', 'Text B'))
