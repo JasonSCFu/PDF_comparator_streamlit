@@ -5,12 +5,14 @@ The app should be able to do the following:
 - compare the selected text and identify any differences in the words 
 - highlight the differences in the text
 - in the result, please maintain the orignal format of the text.
-- allow user to download the highlighted text as a words document
+- allow user to download the highlighted text as a words document. Show the result side by side in 
+words document.
 
 Here is an additional feature that I want to add to the app:
-- create a SQLite database, 
-- user can input text, save, delete, update
-the records in the database.
-- User can name the records in the database, select from the name list, assign the column this record belongs to. 
-- User can define the column name.
+- Create a SQLite database;
+- User can input text, save, delete, update row records and column records in the database;
+- Label the row as Wordings
+- Label the column as Policies;
+- User can select from any row records and column records for comparison.
+- Output the database as a csv file, use Policies as the column names and Wordings as row name for each record;
 - Give a button to export the database as a csv file.
